@@ -1,0 +1,213 @@
+# built command with check enable 
+# sudo docker build --build-arg CHECK=1 -t unbound-core -f ./unbound-core .
+# sudo podman build --build-arg CHECK=1 -t unbound-core -f ./unbound-core .
+# built command without check
+# sudo docker build --rm --no-cache --build-arg CHECK=0 -t unbound-core -f ./unbound-core .
+# sudo podman build --rm --no-cache --build-arg CHECK=0 -t unbound-core -f ./unbound-core .
+
+# nghttp2 is an implementation of HTTP/2 and its header compression algorithm HPACK in C.
+# Support amd64 and arm64 architecture
+# Last update: 23/04/2022 21:00:00
+
+# All libraries come from github repository librairies push on my docker account
+FROM vpolaris/librairies:hiredis as hiredis
+FROM vpolaris/librairies:libexpat as libexpat
+FROM vpolaris/librairies:libevent as libevent
+FROM vpolaris/librairies:libmnl as libmnl
+FROM vpolaris/librairies:libnghttp2 as libnghttp2
+FROM vpolaris/librairies:libsodium as libsodium
+FROM vpolaris/librairies:openssl-quic as openssl
+FROM vpolaris/librairies:protobuf as protobuf
+FROM vpolaris/librairies:protobufc as protobufc
+
+FROM vpolaris/librairies:devtools as unbound-dependencies
+
+COPY --from=hiredis / /
+COPY --from=libexpat / /
+COPY --from=libevent / /
+COPY --from=libmnl / /
+COPY --from=libnghttp2 / /
+COPY --from=libsodium / /
+COPY --from=openssl / /
+COPY --from=protobuf / /
+COPY --from=protobufc / /
+# COPY --from=core / /mnt/core
+
+RUN yum -y install python3 python3-devel systemd-devel \
+    && unlink /usr/bin/python \
+    && ln -s /usr/bin/python3.7  /usr/bin/python
+
+FROM unbound-dependencies as unbound-download
+ARG NAME=unbound
+ARG UNBOUND_GPG_KEY="EDFAA3F2CA4E6EB05681AF8E9F6F1C2D7E045F8D"
+ARG VERSION=1.15.0
+ARG UNBOUND_ARCHIVE=unbound.tar.gz
+ARG SRC_DIRECTORY="/tmp/${NAME}"
+
+
+RUN curl -sSL -o ${UNBOUND_ARCHIVE} "https://www.nlnetlabs.nl/downloads/unbound/unbound-${VERSION}.tar.gz" \
+    && curl -sSL -o ${UNBOUND_ARCHIVE}.asc "https://www.nlnetlabs.nl/downloads/unbound/unbound-${VERSION}.tar.gz.asc" \
+    && curl -sSL -o ${UNBOUND_ARCHIVE}.sha256 "https://www.nlnetlabs.nl/downloads/unbound/unbound-${VERSION}.tar.gz.sha256" \
+    && SUM="$(cat ${UNBOUND_ARCHIVE}.sha256) ${UNBOUND_ARCHIVE}" \
+    && if [ "$(sha256sum -c <<< $SUM |cut -d':' -f2|xargs)"=="OK" ];then \ 
+            export GNUPGHOME="$(mktemp -d)" \
+            && gpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys "$UNBOUND_GPG_KEY" \
+            && gpg --batch --verify "${UNBOUND_ARCHIVE}.asc" "${UNBOUND_ARCHIVE}" \
+            && rm -rf "$GNUPGHOME" "${UNBOUND_ARCHIVE}.asc" "${UNBOUND_ARCHIVE}.sha256"\
+            && mkdir -p "${SRC_DIRECTORY}" \
+            && tar -xzC "${SRC_DIRECTORY}" --strip-components=1 -f "${UNBOUND_ARCHIVE}" \
+            && rm -f "${UNBOUND_ARCHIVE}" \
+            && touch "/etc/compiled_versions/${NAME}.${VERSION}"  \
+       ;fi    
+
+FROM unbound-download as unbound-compile
+ARG NAME=unbound
+ARG chroot_path="/var/lib/chroot"
+ARG unbound_config="/etc/unbound.conf"
+ARG SRC_DIRECTORY="/tmp/${NAME}"
+ENV PATH=/usr/local/protobufc/bin:$PATH
+ARG CHECK=1       
+RUN mkdir /usr/local/unbound \
+    && mkdir -p /unbound/etc/unbound \
+    && ldconfig \
+    && cd "${SRC_DIRECTORY}" \
+    && aclocal && libtoolize --force && autoreconf \
+    && ./configure --disable-static --with-pic --with-gnu-ld --enable-pie \
+        --prefix=/usr/local/unbound \
+        --with-libevent=/usr/local/libevent --with-libexpat=/usr/local/libexpat\
+        --enable-dnscrypt --with-libsodium=/usr/local/libsodium  \
+        --enable-dnstap --with-protobuf-c=/usr/local/protobufc \
+        --enable-cachedb --with-libhiredis=/usr/local/hiredis \
+        --enable-ipset --with-libmnl=/usr/local/libmnl \
+        --enable-subnet --enable-tfo-client --enable-tfo-server \
+        --disable-systemd --with-pythonmodule --enable-ipsecmod \
+        --with-libnghttp2=/usr/local/libnghttp2 \
+        --with-conf-file=${chroot_path}${unbound_config} \
+        --with-chroot-dir=${chroot_path} \
+    && make -j "$(nproc)" \
+    && if [ ${CHECK} -eq 1 ];then make check -j "$(nproc)"; fi \
+    && make install \
+    && echo "/usr/local/unbound/lib" | tee /etc/ld.so.conf.d/unbound.conf
+
+FROM unbound-compile as unbound-sysroot
+ARG arch="$(uname -m)"
+ARG sysroot="/mnt/core"
+ARG chroot_path="/var/lib/chroot"
+ARG unbound_config="/etc/unbound.conf"
+ARG release="2"
+ARG flags="--setopt=tsflags=nodocs --releasever=${release}" 
+
+RUN unlink /usr/bin/python \
+    && ln -s /usr/bin/python2.7  /usr/bin/python 
+RUN mkdir -p  ${sysroot}/etc/ && cp -r /etc/yum* ${sysroot}/etc/
+RUN mkdir -p ${sysroot}/etc/unbound \
+    && mkdir -p ${sysroot}${chroot_path}/{db,log,etc,share}
+RUN yum -y --installroot=${sysroot} ${flags} install glibc setup filesystem libcrypt-nss ca-certificates tar coreutils
+
+COPY --from=unbound-compile /usr/local/unbound/sbin/unbound ${sysroot}/sbin/unbound
+RUN rm -f /usr/local/unbound/sbin/unbound
+COPY --from=unbound-compile /usr/local/unbound/sbin/* ${sysroot}/bin/
+RUN rm -rf /usr/local/unbound/sbin/
+COPY --from=unbound-compile ${chroot_path}${unbound_config} ${sysroot}${chroot_path}${unbound_config}
+COPY --from=unbound-compile /usr/local/*/lib/ ${sysroot}/usr/lib64/
+COPY --from=unbound-compile /usr/local/*/bin/ ${sysroot}/usr/bin/
+RUN rm ${sysroot}/usr/lib64/*.la
+COPY --from=unbound-compile /etc/compiled_versions/ ${sysroot}/etc/compiled_versions/
+COPY --from=unbound-compile /lib64/libpython3*  $sysroot/lib64
+
+RUN yum -y --installroot=${sysroot} ${flags} clean all \
+   && rm -rf ${sysroot}/usr/{{lib,share}/locale,{lib,lib64}/gconv,bin/localedef,sbin/build-locale-archive} \
+#  docs and man pages       
+    && rm -rf ${sysroot}/usr/share/{man,doc,info,gnome/help} \
+#  cracklib
+    && rm -rf ${sysroot}/usr/share/cracklib \
+#  i18n
+    && rm -rf ${sysroot}/usr/share/i18n \
+#  yum cache
+    && rm -rf ${sysroot}/var/cache/yum \
+    && mkdir -p --mode=0755 ${sysroot}/var/cache/yum \
+#  sln
+    && rm -rf ${sysroot}/sbin/sln \
+#  ldconfig
+    && rm -rf ${sysroot}/etc/ld.so.cache ${sysroot}/var/cache/ldconfig \
+    && mkdir -p --mode=0755 ${sysroot}/var/cache/ldconfig
+
+FROM scratch as unbound-core
+
+COPY --from=unbound-sysroot /mnt/core /
+
+
+FROM unbound-compile as unbound-config
+ARG arch="$(uname -m)"
+ARG sysroot="/mnt/core"
+ARG chroot_path="/var/lib/chroot"
+ARG unbound_config="/etc/unbound.conf"
+ARG release="2"
+ARG flags="--setopt=tsflags=nodocs --releasever=${release}" 
+
+COPY --from=unbound-core / /mnt/core 
+
+RUN curl -sSL -o ${sysroot}${chroot_path}/named.cache https://www.internic.net/domain/named.cache \
+    && curl -sSL -o ${sysroot}${chroot_path}/named.cache.sig https://www.internic.net/domain/named.cache.sig \
+    && gpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys 937bb869e3a238c5 \
+    && gpg --batch --verify  ${sysroot}${chroot_path}/named.cache.sig  ${sysroot}${chroot_path}/named.cache
+
+COPY ./unbound-service.sh ${sysroot}/
+ 
+RUN chroot ${sysroot} /bin/unbound-control-setup \
+    && chroot ${sysroot} /bin/bash -c "/bin/unbound-anchor -a ${chroot_path}/db/root.key || exit 0" \
+    && chroot ${sysroot} /bin/bash -c "/bin/unbound-control-setup" \
+    && if [ -f  "/etc/unbound/unbound.conf" ]; then rm /etc/unbound/unbound.conf;fi \
+    && chroot ${sysroot} /bin/bash -c "ln -s ${chroot_path}${unbound_config} /etc/unbound/unbound.conf" \
+    && chroot ${sysroot} /bin/bash -c "ln -s ${chroot_path}/etc/unbound_server.pem /etc/unbound/unbound_server.pem" \ 
+    && chroot ${sysroot} /bin/bash -c "ln -s ${chroot_path}/etc/unbound_server.key /etc/unbound/unbound_server.key" \
+    && chroot ${sysroot} /bin/bash -c "ln -s ${chroot_path}/etc/unbound_control.pem /etc/unbound/unbound_control.pem" \
+    && chroot ${sysroot} /bin/bash -c "ln -s ${chroot_path}/etc/unbound_control.key /etc/unbound/unbound_control.key" \
+    && sed -i 's/# do-ip6: yes/  do-ip6: no/' ${sysroot}${chroot_path}${unbound_config} \
+    && sed -i 's/# interface: 192.0.2.153$/  interface: 0.0.0.0/' ${sysroot}${chroot_path}${unbound_config} \ 
+    && sed -i 's/# username: \"unbound\"/  username: \"unbound\"/' ${sysroot}${chroot_path}${unbound_config} \
+    && sed -i 's/# use-syslog: yes/  use-syslog: no/' ${sysroot}${chroot_path}${unbound_config} \
+    && sed -i -e 's@# access-control: 127.* allow$@  access-control: 0.0.0.0/0 allow@'  ${sysroot}${chroot_path}${unbound_config}
+
+RUN sed -i 's/# hide-identity: no/  hide-identity: yes/' ${sysroot}${chroot_path}${unbound_config} \
+    && sed -i 's/# hide-version: no/  hide-version: yes/' ${sysroot}${chroot_path}${unbound_config} \
+    && sed -i 's/# qname-minimisation: yes/  qname-minimisation: yes/' ${sysroot}${chroot_path}${unbound_config} \
+    && chroot ${sysroot} /bin/bash -c "mkfifo /var/run/unbound.control.pipe" \
+    && sed -i 's/# control-enable: no/  control-enable: yes/' ${sysroot}${chroot_path}${unbound_config} \
+    && sed -i 's/# control-use-cert: \"yes\"/  control-use-cert: \"yes\"/' ${sysroot}${chroot_path}${unbound_config} \
+    && sed -i 's@# control-interface: 127.0.0.1@  control-interface: /var/run/unbound.control.pipe@' ${sysroot}${chroot_path}${unbound_config} 
+
+RUN sed -i -e 's@# chroot: \".*\"@  chroot: \"/var/lib/chroot\"@' ${sysroot}${chroot_path}${unbound_config} \
+    && sed -i -e 's@# directory: \".*\"@  directory: \"/\"@' ${sysroot}${chroot_path}${unbound_config} \
+    && sed -i -e 's@# root-hints: \"\"@  root-hints: \"/named.cache\"@' ${sysroot}${chroot_path}${unbound_config} \
+    && sed -i -e 's@# auto-trust-anchor-file: \".*\"@  auto-trust-anchor-file: \"/db/root.key\"@' ${sysroot}${chroot_path}${unbound_config} \
+    && sed -i -e 's@# logfile: \"\"@  logfile: \"/log/unbound.log\"@' ${sysroot}${chroot_path}${unbound_config}
+
+RUN printf "\nforward-zone:\n" >>  ${sysroot}${chroot_path}${unbound_config} \
+    && printf "name: \".\"\n" >>  ${sysroot}${chroot_path}${unbound_config} \
+    && printf "forward-tls-upstream: yes\n" >>  ${sysroot}${chroot_path}${unbound_config} \
+    && printf "forward-addr: 9.9.9.9@853\n" >>   ${sysroot}${chroot_path}${unbound_config} 
+
+
+
+RUN unlink /usr/bin/python \
+    && ln -s /usr/bin/python2.7  /usr/bin/python 
+
+FROM unbound-config as unbound-user
+
+ARG arch="$(uname -m)"
+ARG sysroot="/mnt/core"
+ARG chroot_path="/var/lib/chroot"
+ARG release="2"
+ARG flags="--setopt=tsflags=nodocs --releasever=${release}"
+
+RUN yum -y --installroot=${sysroot} ${flags} install shadow-utils
+RUN chroot ${sysroot} groupadd -g 274 unbound \
+    && chroot ${sysroot} useradd --system -M -d ${chroot_path} -c 'unbound daemon' -s /bin/false -g 274 -u 274 unbound \
+    && chroot ${sysroot} /bin/bash -c "chown unbound: /var/run/unbound.control.pipe" \    
+
+RUN chmod u+x ${sysroot}/unbound-service.sh \
+    && chroot ${sysroot} /bin/bash -c "chown -R unbound: /etc/unbound ${chroot_path}/"\
+    && chroot ${sysroot} /bin/bash -c "chown unbound: /unbound-service.sh /sbin/unbound /bin/unbound*"
+
+RUN yum -y --installroot=${sysroot} ${flags} remove shadow-utils
