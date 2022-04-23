@@ -1,4 +1,13 @@
-FROM vpolaris/unbound:core as core
+# built command 
+# sudo docker build --rm --no-cache -t unbound-dev -f ./unbound-dev .
+# sudo podman build --rm --no-cache -t unbound-dev -f ./unbound-dev .
+
+# Core component to build dev and server image.
+# Support amd64 and arm64 architecture
+# Last update: 23/04/2022 14:30:00
+
+
+FROM vpolaris/unbound:unbound-core as core
 FROM vpolaris/amazon:base as unbound-dev-tooling
 
 COPY --from=core / /mnt/core 
