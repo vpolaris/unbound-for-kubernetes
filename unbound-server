@@ -1,0 +1,50 @@
+# built command 
+# sudo docker build --rm --no-cache -t unbound-server -f ./unbound-server .
+# sudo podman build --rm --no-cache -t unbound-server -f ./unbound-server .
+
+# Server build with minimal footprint .
+# Support amd64 and arm64 architecture
+# Last update: 23/04/2022 14:55:00
+
+
+FROM vpolaris/unbound:unbound-core as core
+FROM vpolaris/amazon:base as unbound-server-tooling
+
+COPY --from=core / /mnt/core 
+
+ARG arch="$(uname -m)"
+ARG sysroot="/mnt/core"
+ARG chroot_path="/var/lib/chroot"
+ARG unbound_config="/etc/unbound.conf"
+ARG release="2"
+ARG flags="--setopt=tsflags=nodocs --releasever=${release}" 
+
+
+RUN yum -y --installroot=${sysroot} ${flags} remove shadow-utils coreutils grep gawk audit-libs.x86_64 ncurses libcap-ng libcap gmp libverto sed
+
+RUN yum -y --installroot=${sysroot} ${flags} clean all \
+    && rm -rf ${sysroot}/usr/{{lib,share}/locale,{lib,lib64}/gconv,bin/localedef,sbin/build-locale-archive} \
+#  docs and man pages       
+    && rm -rf ${sysroot}/usr/share/{man,doc,info,gnome/help} \
+#  cracklib
+    && rm -rf ${sysroot}/usr/share/cracklib \
+#  i18n
+    && rm -rf ${sysroot}/usr/share/i18n \
+#  yum cache
+    && rm -rf ${sysroot}/var/cache/yum \
+    && mkdir -p --mode=0755 ${sysroot}/var/cache/yum \
+#  sln
+    && rm -rf ${sysroot}/sbin/sln \
+#  ldconfig
+    && rm -rf ${sysroot}/etc/ld.so.cache ${sysroot}/var/cache/ldconfig \
+    && mkdir -p --mode=0755 ${sysroot}/var/cache/ldconfig
+
+FROM scratch as unbound-server
+ARG chroot_path="/var/lib/chroot"
+
+COPY --from=unbound-server-tooling /mnt/core /
+
+EXPOSE 53/tcp
+EXPOSE 53/udp
+EXPOSE 853/tcp
+ENTRYPOINT ["/usr/sbin/unbound","-d", "-v", "-c", "/var/lib/chroot/etc/unbound.conf"]
