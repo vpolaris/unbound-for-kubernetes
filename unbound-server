@@ -21,7 +21,7 @@ ARG flags="--setopt=tsflags=nodocs --releasever=${release}"
 
 
 RUN yum -y --installroot=${sysroot} ${flags} remove shadow-utils coreutils audit-libs ncurses libcap-ng libcap gmp libverto \
-    && yum -y --installroot=${sysroot} ${flags} remove gawk sed  grep
+    && yum -y --installroot=${sysroot} ${flags} remove gawk sed  grep || exit 0
 
 RUN yum -y --installroot=${sysroot} ${flags} clean all \
     && rm -rf ${sysroot}/usr/{{lib,share}/locale,{lib,lib64}/gconv,bin/localedef,sbin/build-locale-archive} \
