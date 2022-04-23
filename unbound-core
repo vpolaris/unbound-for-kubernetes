@@ -7,7 +7,7 @@
 
 # nghttp2 is an implementation of HTTP/2 and its header compression algorithm HPACK in C.
 # Support amd64 and arm64 architecture
-# Last update: 23/04/2022 08:20:00
+# Last update: 23/04/2022 08:45:00
 
 # All libraries come from github repository librairies push on my docker account
 FROM vpolaris/librairies:hiredis as hiredis
@@ -43,6 +43,8 @@ ARG VERSION=1.15.0
 ARG UNBOUND_ARCHIVE=unbound.tar.gz
 ARG SRC_DIRECTORY="/tmp/${NAME}"
 
+#Workaround to fix fake path used by buildx for arm64
+RUN rm -rf /usr/local/protobufc/bin/ && ln -s /usr/bin/ /usr/local/protobufc/bin/
 
 RUN curl -sSL -o ${UNBOUND_ARCHIVE} "https://www.nlnetlabs.nl/downloads/unbound/unbound-${VERSION}.tar.gz" \
     && curl -sSL -o ${UNBOUND_ARCHIVE}.asc "https://www.nlnetlabs.nl/downloads/unbound/unbound-${VERSION}.tar.gz.asc" \
