@@ -7,7 +7,7 @@
 
 # nghttp2 is an implementation of HTTP/2 and its header compression algorithm HPACK in C.
 # Support amd64 and arm64 architecture
-# Last update: 23/04/2022 08:55:00
+# Last update: 23/04/2022 09:10:00
 
 # All libraries come from github repository librairies push on my docker account
 FROM vpolaris/librairies:hiredis as hiredis
@@ -29,6 +29,7 @@ COPY --from=libnghttp2 / /
 COPY --from=libsodium / /
 COPY --from=openssl / /
 COPY --from=protobuf / /
+COPY --from=protobufc /usr/local/protobufc/bin/ /usr/bin
 COPY --from=protobufc / /
 COPY --from=libmnl / /
 
