@@ -104,7 +104,9 @@ RUN unlink /usr/bin/python \
 RUN mkdir -p  ${sysroot}/etc/ && cp -r /etc/yum* ${sysroot}/etc/
 RUN mkdir -p ${sysroot}/etc/unbound \
     && mkdir -p ${sysroot}${chroot_path}/{db,log,etc,share}
-RUN yum -y --installroot=${sysroot} ${flags} install glibc setup filesystem libcrypt-nss ca-certificates tar coreutils
+    
+# Add exit 0 to resolve arm64 qemu error during buildx processing
+RUN yum -y --installroot=${sysroot} ${flags} install glibc setup filesystem libcrypt-nss ca-certificates tar coreutils || exit 0
 
 COPY --from=unbound-compile /usr/local/unbound/sbin/unbound ${sysroot}/sbin/unbound
 RUN rm -f /usr/local/unbound/sbin/unbound
