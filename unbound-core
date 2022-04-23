@@ -7,7 +7,7 @@
 
 # nghttp2 is an implementation of HTTP/2 and its header compression algorithm HPACK in C.
 # Support amd64 and arm64 architecture
-# Last update: 23/04/2022 23:40:00
+# Last update: 23/04/2022 08:20:00
 
 # All libraries come from github repository librairies push on my docker account
 FROM vpolaris/librairies:hiredis as hiredis
@@ -25,13 +25,12 @@ FROM vpolaris/librairies:devtools as unbound-dependencies
 COPY --from=hiredis / /
 COPY --from=libexpat / /
 COPY --from=libevent / /
-COPY --from=libmnl / /
 COPY --from=libnghttp2 / /
 COPY --from=libsodium / /
 COPY --from=openssl / /
 COPY --from=protobuf / /
 COPY --from=protobufc / /
-# COPY --from=core / /mnt/core
+COPY --from=libmnl / /
 
 RUN yum -y install python3 python3-devel systemd-devel \
     && unlink /usr/bin/python \
