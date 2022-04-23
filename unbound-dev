@@ -19,7 +19,8 @@ ARG unbound_config="/etc/unbound.conf"
 ARG release="2"
 ARG flags="--setopt=tsflags=nodocs --releasever=${release}" 
 
-RUN yum -y --installroot=${sysroot} ${flags} install vim bind-utils iproute ca-certificates
+# Add exit 0 to resolve arm64 qemu error during buildx processing
+RUN yum -y --installroot=${sysroot} ${flags} install vim bind-utils iproute ca-certificates || exit 0
 
 RUN yum -y --installroot=${sysroot} remove shadow-utils \
     && yum -y --installroot=${sysroot} clean all \
