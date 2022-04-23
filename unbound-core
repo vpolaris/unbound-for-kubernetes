@@ -106,7 +106,7 @@ RUN mkdir -p ${sysroot}/etc/unbound \
     && mkdir -p ${sysroot}${chroot_path}/{db,log,etc,share}
     
 # Add exit 0 to resolve arm64 qemu error during buildx processing
-RUN yum -y --installroot=${sysroot} ${flags} install glibc setup filesystem libcrypt-nss ca-certificates tar coreutils || exit 0
+RUN yum -y --installroot=${sysroot} ${flags} install glibc setup filesystem libcrypt-nss ca-certificates tar coreutils  shadow-utils || exit 0
 
 COPY --from=unbound-compile /usr/local/unbound/sbin/unbound ${sysroot}/sbin/unbound
 RUN rm -f /usr/local/unbound/sbin/unbound
@@ -118,6 +118,11 @@ COPY --from=unbound-compile /usr/local/*/bin/ ${sysroot}/usr/bin/
 RUN rm ${sysroot}/usr/lib64/*.la
 COPY --from=unbound-compile /etc/compiled_versions/ ${sysroot}/etc/compiled_versions/
 COPY --from=unbound-compile /lib64/libpython3*  $sysroot/lib64
+
+RUN curl -sSL -o ${sysroot}${chroot_path}/named.cache https://www.internic.net/domain/named.cache \
+    && curl -sSL -o ${sysroot}${chroot_path}/named.cache.sig https://www.internic.net/domain/named.cache.sig \
+    && gpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys 937bb869e3a238c5 \
+    && gpg --batch --verify  ${sysroot}${chroot_path}/named.cache.sig  ${sysroot}${chroot_path}/named.cache
 
 RUN yum -y --installroot=${sysroot} ${flags} clean all \
    && rm -rf ${sysroot}/usr/{{lib,share}/locale,{lib,lib64}/gconv,bin/localedef,sbin/build-locale-archive} \
@@ -141,7 +146,7 @@ FROM scratch as unbound-core
 COPY --from=unbound-sysroot /mnt/core /
 
 
-FROM unbound-compile as unbound-config
+FROM scratch as unbound-config
 ARG arch="$(uname -m)"
 ARG sysroot="/mnt/core"
 ARG chroot_path="/var/lib/chroot"
@@ -149,48 +154,45 @@ ARG unbound_config="/etc/unbound.conf"
 ARG release="2"
 ARG flags="--setopt=tsflags=nodocs --releasever=${release}" 
 
-COPY --from=unbound-core / /mnt/core 
+COPY --from=unbound-core / /
 
-RUN curl -sSL -o ${sysroot}${chroot_path}/named.cache https://www.internic.net/domain/named.cache \
-    && curl -sSL -o ${sysroot}${chroot_path}/named.cache.sig https://www.internic.net/domain/named.cache.sig \
-    && gpg --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys 937bb869e3a238c5 \
-    && gpg --batch --verify  ${sysroot}${chroot_path}/named.cache.sig  ${sysroot}${chroot_path}/named.cache
 
-COPY ./unbound-service.sh ${sysroot}/
+
+COPY ./unbound-service.sh /
  
-RUN chroot ${sysroot} /bin/bash -c "/bin/unbound-control-setup" \
-    && chroot ${sysroot} /bin/bash -c "/bin/unbound-anchor -a ${chroot_path}/db/root.key || exit 0" \
-    && chroot ${sysroot} /bin/bash -c "/bin/unbound-control-setup" \
+RUN /bin/bash -c "/bin/unbound-control-setup" \
+    && /bin/bash -c "/bin/unbound-anchor -a ${chroot_path}/db/root.key || exit 0" \
+    && /bin/bash -c "/bin/unbound-control-setup" \
     && if [ -f  "/etc/unbound/unbound.conf" ]; then rm /etc/unbound/unbound.conf;fi \
-    && chroot ${sysroot} /bin/bash -c "ln -s ${chroot_path}${unbound_config} /etc/unbound/unbound.conf" \
-    && chroot ${sysroot} /bin/bash -c "ln -s ${chroot_path}/etc/unbound_server.pem /etc/unbound/unbound_server.pem" \ 
-    && chroot ${sysroot} /bin/bash -c "ln -s ${chroot_path}/etc/unbound_server.key /etc/unbound/unbound_server.key" \
-    && chroot ${sysroot} /bin/bash -c "ln -s ${chroot_path}/etc/unbound_control.pem /etc/unbound/unbound_control.pem" \
-    && chroot ${sysroot} /bin/bash -c "ln -s ${chroot_path}/etc/unbound_control.key /etc/unbound/unbound_control.key" \
-    && sed -i 's/# do-ip6: yes/  do-ip6: no/' ${sysroot}${chroot_path}${unbound_config} \
-    && sed -i 's/# interface: 192.0.2.153$/  interface: 0.0.0.0/' ${sysroot}${chroot_path}${unbound_config} \ 
-    && sed -i 's/# username: \"unbound\"/  username: \"unbound\"/' ${sysroot}${chroot_path}${unbound_config} \
-    && sed -i 's/# use-syslog: yes/  use-syslog: no/' ${sysroot}${chroot_path}${unbound_config} \
-    && sed -i -e 's@# access-control: 127.* allow$@  access-control: 0.0.0.0/0 allow@'  ${sysroot}${chroot_path}${unbound_config}
+    && /bin/bash -c "ln -s ${chroot_path}${unbound_config} /etc/unbound/unbound.conf" \
+    && /bin/bash -c "ln -s ${chroot_path}/etc/unbound_server.pem /etc/unbound/unbound_server.pem" \ 
+    && /bin/bash -c "ln -s ${chroot_path}/etc/unbound_server.key /etc/unbound/unbound_server.key" \
+    && /bin/bash -c "ln -s ${chroot_path}/etc/unbound_control.pem /etc/unbound/unbound_control.pem" \
+    && /bin/bash -c "ln -s ${chroot_path}/etc/unbound_control.key /etc/unbound/unbound_control.key" \
+    && sed -i 's/# do-ip6: yes/  do-ip6: no/' ${chroot_path}${unbound_config} \
+    && sed -i 's/# interface: 192.0.2.153$/  interface: 0.0.0.0/' ${chroot_path}${unbound_config} \ 
+    && sed -i 's/# username: \"unbound\"/  username: \"unbound\"/' ${chroot_path}${unbound_config} \
+    && sed -i 's/# use-syslog: yes/  use-syslog: no/' ${chroot_path}${unbound_config} \
+    && sed -i -e 's@# access-control: 127.* allow$@  access-control: 0.0.0.0/0 allow@'  ${chroot_path}${unbound_config}
 
-RUN sed -i 's/# hide-identity: no/  hide-identity: yes/' ${sysroot}${chroot_path}${unbound_config} \
-    && sed -i 's/# hide-version: no/  hide-version: yes/' ${sysroot}${chroot_path}${unbound_config} \
-    && sed -i 's/# qname-minimisation: yes/  qname-minimisation: yes/' ${sysroot}${chroot_path}${unbound_config} \
-    && chroot ${sysroot} /bin/bash -c "mkfifo /var/run/unbound.control.pipe" \
-    && sed -i 's/# control-enable: no/  control-enable: yes/' ${sysroot}${chroot_path}${unbound_config} \
-    && sed -i 's/# control-use-cert: \"yes\"/  control-use-cert: \"yes\"/' ${sysroot}${chroot_path}${unbound_config} \
-    && sed -i 's@# control-interface: 127.0.0.1@  control-interface: /var/run/unbound.control.pipe@' ${sysroot}${chroot_path}${unbound_config} 
+RUN sed -i 's/# hide-identity: no/  hide-identity: yes/' ${chroot_path}${unbound_config} \
+    && sed -i 's/# hide-version: no/  hide-version: yes/' ${chroot_path}${unbound_config} \
+    && sed -i 's/# qname-minimisation: yes/  qname-minimisation: yes/' ${chroot_path}${unbound_config} \
+    && /bin/bash -c "mkfifo /var/run/unbound.control.pipe" \
+    && sed -i 's/# control-enable: no/  control-enable: yes/' ${chroot_path}${unbound_config} \
+    && sed -i 's/# control-use-cert: \"yes\"/  control-use-cert: \"yes\"/' ${chroot_path}${unbound_config} \
+    && sed -i 's@# control-interface: 127.0.0.1@  control-interface: /var/run/unbound.control.pipe@' ${chroot_path}${unbound_config} 
 
-RUN sed -i -e 's@# chroot: \".*\"@  chroot: \"/var/lib/chroot\"@' ${sysroot}${chroot_path}${unbound_config} \
-    && sed -i -e 's@# directory: \".*\"@  directory: \"/\"@' ${sysroot}${chroot_path}${unbound_config} \
-    && sed -i -e 's@# root-hints: \"\"@  root-hints: \"/named.cache\"@' ${sysroot}${chroot_path}${unbound_config} \
-    && sed -i -e 's@# auto-trust-anchor-file: \".*\"@  auto-trust-anchor-file: \"/db/root.key\"@' ${sysroot}${chroot_path}${unbound_config} \
-    && sed -i -e 's@# logfile: \"\"@  logfile: \"/log/unbound.log\"@' ${sysroot}${chroot_path}${unbound_config}
+RUN sed -i -e 's@# chroot: \".*\"@  chroot: \"/var/lib/chroot\"@' ${chroot_path}${unbound_config} \
+    && sed -i -e 's@# directory: \".*\"@  directory: \"/\"@' ${chroot_path}${unbound_config} \
+    && sed -i -e 's@# root-hints: \"\"@  root-hints: \"/named.cache\"@' ${chroot_path}${unbound_config} \
+    && sed -i -e 's@# auto-trust-anchor-file: \".*\"@  auto-trust-anchor-file: \"/db/root.key\"@' ${chroot_path}${unbound_config} \
+    && sed -i -e 's@# logfile: \"\"@  logfile: \"/log/unbound.log\"@' ${chroot_path}${unbound_config}
 
-RUN printf "\nforward-zone:\n" >>  ${sysroot}${chroot_path}${unbound_config} \
-    && printf "name: \".\"\n" >>  ${sysroot}${chroot_path}${unbound_config} \
-    && printf "forward-tls-upstream: yes\n" >>  ${sysroot}${chroot_path}${unbound_config} \
-    && printf "forward-addr: 9.9.9.9@853\n" >>   ${sysroot}${chroot_path}${unbound_config} 
+RUN printf "\nforward-zone:\n" >>  ${chroot_path}${unbound_config} \
+    && printf "name: \".\"\n" >>  ${chroot_path}${unbound_config} \
+    && printf "forward-tls-upstream: yes\n" >>  ${chroot_path}${unbound_config} \
+    && printf "forward-addr: 9.9.9.9@853\n" >>   ${chroot_path}${unbound_config} 
 
 
 
@@ -205,13 +207,13 @@ ARG chroot_path="/var/lib/chroot"
 ARG release="2"
 ARG flags="--setopt=tsflags=nodocs --releasever=${release}"
 
-RUN yum -y --installroot=${sysroot} ${flags} install shadow-utils
-RUN chroot ${sysroot} groupadd -g 274 unbound \
-    && chroot ${sysroot} useradd --system -M -d ${chroot_path} -c 'unbound daemon' -s /bin/false -g 274 -u 274 unbound \
-    && chroot ${sysroot} /bin/bash -c "chown unbound: /var/run/unbound.control.pipe" \    
+# RUN yum -y --installroot= ${flags} install shadow-utils
+RUN groupadd -g 274 unbound \
+    && useradd --system -M -d ${chroot_path} -c 'unbound daemon' -s /bin/false -g 274 -u 274 unbound \
+    && /bin/bash -c "chown unbound: /var/run/unbound.control.pipe" \    
 
-RUN chmod u+x ${sysroot}/unbound-service.sh \
-    && chroot ${sysroot} /bin/bash -c "chown -R unbound: /etc/unbound ${chroot_path}/"\
-    && chroot ${sysroot} /bin/bash -c "chown unbound: /unbound-service.sh /sbin/unbound /bin/unbound*"
+RUN chmod u+x /unbound-service.sh \
+    && /bin/bash -c "chown -R unbound: /etc/unbound ${chroot_path}/"\
+    && /bin/bash -c "chown unbound: /unbound-service.sh /sbin/unbound /bin/unbound*"
 
-RUN yum -y --installroot=${sysroot} ${flags} remove shadow-utils
+# RUN yum -y --installroot= ${flags} remove shadow-utils
