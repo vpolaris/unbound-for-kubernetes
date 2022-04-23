@@ -20,7 +20,7 @@ ARG release="2"
 ARG flags="--setopt=tsflags=nodocs --releasever=${release}" 
 
 
-RUN yum -y --installroot=${sysroot} ${flags} remove shadow-utils coreutils audit-libs ncurses libcap-ng libcap gmp libverto 
+RUN yum -y --installroot=${sysroot} ${flags} remove shadow-utils coreutils audit-libs ncurses libcap-ng libcap gmp libverto \
     && yum -y --installroot=${sysroot} ${flags} remove gawk sed  grep
 
 RUN yum -y --installroot=${sysroot} ${flags} clean all \
