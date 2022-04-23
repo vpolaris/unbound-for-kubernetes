@@ -1,0 +1,148 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: unbound
+  name: unbound
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: unbound
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: unbound
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: kubernetes.io/arch
+                operator: In
+                values:
+                - amd64
+                - arm64
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - unbound
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: unbound
+        stdin: true
+        tty: true  
+        env:
+        - name: PATH
+          value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        - name: TERM
+          value: xterm
+        - name: container
+          value: podman
+        - name: maintener
+          value: vpolaris
+        image: docker.io/vpolaris/unbound:server
+        command: ["/usr/sbin/unbound","-d", "-v", "-c", "/var/lib/chroot/etc/unbound.conf"]
+        # args:
+        # - start
+        # - stop
+        # - reload
+        # - restart
+        ports:
+        - containerPort: 53
+          hostPort: 153
+          protocol: TCP
+        - containerPort: 53
+          hostPort: 153
+          protocol: UDP
+        - containerPort: 853
+          hostPort: 853
+          protocol: TCP
+        securityContext:
+          allowPrivilegeEscalation: true
+          capabilities:
+            drop:
+            - CAP_MKNOD
+            - CAP_NET_RAW
+            - CAP_AUDIT_WRITE
+            add:
+            - SYS_CHROOT
+          privileged: false
+          readOnlyRootFilesystem: false
+          seLinuxOptions: {}
+        volumeMounts:
+          - mountPath: "/var/lib/chroot/etc"
+            name: config
+      volumes:
+      - name: config
+        persistentVolumeClaim:
+          claimName: unbound0
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: unbound-udp
+  namespace: default
+  annotations:
+    metallb.universe.tf/allow-shared-ip: "unbound-svc"
+  labels:
+    app: unbound-udp
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.112.10
+  ports:
+  # port=available to other containers
+  - port: 53
+    name: dns-udp
+    # targetPort=exposed from inside container
+    protocol: UDP
+  selector:
+    app: unbound
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: unbound-tcp
+  annotations:
+    metallb.universe.tf/allow-shared-ip: "unbound-svc"
+  namespace: default
+  labels:
+    app: unbound
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.112.10
+  ports:
+  - port: 53
+    name: dns-tcp
+    # targetPort=exposed from inside container
+    protocol: TCP
+  selector:
+    app: unbound
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: unbound-dot
+  annotations:
+    metallb.universe.tf/allow-shared-ip: "unbound-svc"
+  namespace: default
+  labels:
+    app: unbound
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 192.168.112.10
+  ports:
+  - port: 853
+    name: dot
+    # targetPort=exposed from inside container
+    protocol: TCP
+  selector:
+    app: unbound
