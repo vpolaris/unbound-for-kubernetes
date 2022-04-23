@@ -7,7 +7,7 @@
 
 # nghttp2 is an implementation of HTTP/2 and its header compression algorithm HPACK in C.
 # Support amd64 and arm64 architecture
-# Last update: 23/04/2022 09:10:00
+# Last update: 23/04/2022 11:20:00
 
 # All libraries come from github repository librairies push on my docker account
 FROM vpolaris/librairies:hiredis as hiredis
@@ -158,7 +158,7 @@ RUN curl -sSL -o ${sysroot}${chroot_path}/named.cache https://www.internic.net/d
 
 COPY ./unbound-service.sh ${sysroot}/
  
-RUN chroot ${sysroot} /bin/unbound-control-setup \
+RUN chroot ${sysroot} /bin/bash -c "/bin/unbound-control-setup" \
     && chroot ${sysroot} /bin/bash -c "/bin/unbound-anchor -a ${chroot_path}/db/root.key || exit 0" \
     && chroot ${sysroot} /bin/bash -c "/bin/unbound-control-setup" \
     && if [ -f  "/etc/unbound/unbound.conf" ]; then rm /etc/unbound/unbound.conf;fi \
